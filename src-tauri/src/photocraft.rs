@@ -8,7 +8,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 // PhotoCraft 서버는 30초 유휴 연결을 끊으므로 그 전에 새로 연결한다.
 const IDLE_RECONNECT: Duration = Duration::from_secs(20);
@@ -179,7 +179,7 @@ pub async fn pc_status(app: AppHandle) -> Result<PcStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PcState>();
         let config = state.config.lock().unwrap().clone();
-        let probe = call_inner(&app, &state, "engine.execute", json!({"command": "command.list", "params": {"filter": "file.new"}}));
+        let probe = call_inner(&app, &state, "jobs.list", json!({}));
         Ok(PcStatus {
             connected: probe.is_ok(),
             running: photocraft_running(),
@@ -192,48 +192,70 @@ pub async fn pc_status(app: AppHandle) -> Result<PcStatus, String> {
 }
 
 #[tauri::command]
-pub fn pc_set_config(app: AppHandle, state: State<'_, PcState>, config: PcConfig) -> Result<(), String> {
-    std::fs::write(config_file(&app)?, serde_json::to_string_pretty(&config).unwrap()).map_err(|e| e.to_string())?;
-    *state.config.lock().unwrap() = config;
-    *state.conn.lock().unwrap() = None;
-    Ok(())
+pub async fn pc_set_config(app: AppHandle, config: PcConfig) -> Result<(), String> {
+    if config.port == 0 {
+        return Err("제어 포트는 1~65535 사이여야 합니다".into());
+    }
+    // 진행 중인 호출이 연결 뮤텍스를 오래 잡고 있을 수 있으므로 UI 스레드가 아닌 블로킹 풀에서 처리
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<PcState>();
+        std::fs::write(config_file(&app)?, serde_json::to_string_pretty(&config).unwrap()).map_err(|e| e.to_string())?;
+        *state.config.lock().unwrap() = config;
+        *state.conn.lock().unwrap() = None;
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn probe(app: &AppHandle) -> bool {
+    let state = app.state::<PcState>();
+    call_inner(app, &state, "jobs.list", json!({})).is_ok()
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
 }
 
 /// 제어 포트·토큰·자동화 루트를 지정해 PhotoCraft를 실행한다.
 /// 이미 제어 없이 실행 중이면 인자가 전달되지 않으므로 오류로 알린다.
 #[tauri::command]
 pub async fn pc_launch(app: AppHandle) -> Result<(), String> {
-    let state = app.state::<PcState>();
-    let config = state.config.lock().unwrap().clone();
-    if call_inner(&app, &state, "engine.execute", json!({"command": "command.list", "params": {"filter": "file.new"}})).is_ok() {
+    let config = app.state::<PcState>().config.lock().unwrap().clone();
+    let a = app.clone();
+    if blocking(move || probe(&a)).await? {
         return Ok(());
     }
-    if photocraft_running() {
+    if blocking(photocraft_running).await? {
         return Err("RUNNING_WITHOUT_CONTROL".into());
     }
     let token = token_file(&app)?;
-    let status = std::process::Command::new("open")
-        .arg("-a")
-        .arg(&config.app_path)
-        .arg("--args")
-        .args(["--control", &config.port.to_string()])
-        .arg("--control-token-file")
-        .arg(&token)
-        .arg("--automation-read-root")
-        .arg(&config.root)
-        .arg("--automation-write-root")
-        .arg(&config.root)
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err(format!("PhotoCraft 실행 실패: {}", config.app_path));
+    let status = blocking(move || {
+        std::process::Command::new("open")
+            .arg("-a")
+            .arg(&config.app_path)
+            .arg("--args")
+            .args(["--control", &config.port.to_string()])
+            .arg("--control-token-file")
+            .arg(&token)
+            .arg("--automation-read-root")
+            .arg(&config.root)
+            .arg("--automation-write-root")
+            .arg(&config.root)
+            .status()
+            .map_err(|e| e.to_string())
+            .map(|s| (s.success(), config.app_path.clone()))
+    })
+    .await??;
+    if !status.0 {
+        return Err(format!("PhotoCraft 실행 실패: {}", status.1));
     }
     // 서버가 뜰 때까지 최대 20초 대기
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         tokio_sleep(400).await;
-        let state = app.state::<PcState>();
-        if call_inner(&app, &state, "engine.execute", json!({"command": "command.list", "params": {"filter": "file.new"}})).is_ok() {
+        let a = app.clone();
+        if blocking(move || probe(&a)).await? {
             return Ok(());
         }
     }
@@ -243,17 +265,19 @@ pub async fn pc_launch(app: AppHandle) -> Result<(), String> {
 /// 실행 중인 PhotoCraft를 종료한다(저장 안 된 문서가 있으면 PhotoCraft가 확인 창을 띄운다).
 #[tauri::command]
 pub async fn pc_quit(app: AppHandle) -> Result<(), String> {
-    {
-        let state = app.state::<PcState>();
-        let _ = call_inner(&app, &state, "app.quit", json!({}));
+    let a = app.clone();
+    blocking(move || {
+        let state = a.state::<PcState>();
+        let _ = call_inner(&a, &state, "app.quit", json!({}));
         *state.conn.lock().unwrap() = None;
-    }
-    if photocraft_running() {
-        let _ = std::process::Command::new("osascript").args(["-e", "tell application \"PhotoCraft\" to quit"]).status();
-    }
+        if photocraft_running() {
+            let _ = std::process::Command::new("osascript").args(["-e", "tell application \"PhotoCraft\" to quit"]).status();
+        }
+    })
+    .await?;
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
-        if !photocraft_running() {
+        if !blocking(photocraft_running).await? {
             return Ok(());
         }
         tokio_sleep(300).await;

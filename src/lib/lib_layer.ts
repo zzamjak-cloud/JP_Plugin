@@ -126,7 +126,8 @@ export function moveLayerTo(layers: number[], target: number, position: "above" 
 
 /** 레이어 픽셀 이동 (dx, dy) (UXP moveLayerOffset 대응) */
 export function moveLayerOffset(layerId: number | undefined, dx: number, dy: number) {
-  const p: Record<string, unknown> = { offset: [dx, dy] };
+  // layer.translate 는 dx/dy 파라미터를 받는다 (offset 배열은 무시됨)
+  const p: Record<string, unknown> = { dx: Math.round(dx), dy: Math.round(dy) };
   if (layerId !== undefined) p.layer = layerId;
   return exec("layer.translate", p);
 }
@@ -181,7 +182,8 @@ export async function layerViaCopy(): Promise<number | null> {
 export async function cutRegion(top: number, left: number, bottom: number, right: number, name: string): Promise<number | null> {
   await exec("select.rect", { x: left, y: top, width: right - left, height: bottom - top });
   const id = await layerViaCopy();
-  await exec("select.deselect", {});
+  // layerViaCopy 후 선택 영역이 이미 해제될 수 있으므로 실패 무시
+  await tryExec("select.deselect", {});
   if (id !== null) await renameLayer(id, name);
   return id;
 }
@@ -201,3 +203,40 @@ export function walkLayers(tree: PcLayer[], fn: (l: PcLayer, parent: PcLayer | n
 }
 
 export const isGroup = (l: PcLayer) => l.kind === "Group" || !!l.children;
+
+/** 모든 레이어 선택 해제 (UXP selectNoLays 대응) */
+export const selectNoLayers = () => exec("select.deselectLayers", {});
+
+/** 모든 레이어 선택 */
+export const selectAllLayers = () => exec("select.allLayers", {});
+
+/** 스마트 오브젝트 여부 (PhotoCraft kind: "Smart Object") */
+export const isSmartObject = (l: PcLayer) => l.kind === "Smart Object" || l.kind === "SmartObject";
+
+/** 스마트 오브젝트 내용 편집 문서 열기 (UXP placedLayerEditContents 대응) → 내용 문서 인덱스, 부모 레이어 ID */
+export async function editSmartObjectContents(layerId?: number): Promise<{ document: number; parentLayer: number }> {
+  return exec("layer.smartObjects.editContents", layerId === undefined ? {} : { layer: layerId });
+}
+
+/** 보이는 레이어 병합 → 병합 결과 레이어 ID (UXP actionCommands('mergeVisible') 대응) */
+export async function mergeVisible(): Promise<number | null> {
+  await exec("layer.mergeVisible", {});
+  return (await getActiveLayer())?.id ?? null;
+}
+
+/** 배경 레이어를 일반 레이어로 변환 (배경이 없으면 그대로) (UXP backgroundToLayer 대응) */
+export const backgroundToLayer = () => exec("layer.new.layerFromBackground", { ifPresent: true });
+
+/** 이름이 같은 첫 번째 최상위 레이어 삭제 (없으면 무시) → 삭제 여부 (UXP deleteLayerByName 대응) */
+export async function deleteLayerByName(name: string): Promise<boolean> {
+  const l = (await getLayerTree()).find((x) => x.name === name);
+  if (!l) return false;
+  await deleteLayer(l.id);
+  return true;
+}
+
+/** 레이어 마스크를 픽셀에 적용하고 제거 (UXP removeMask apply:true 대응). 마스크가 없으면 무시 */
+export const applyLayerMask = (layerId?: number) => tryExec("layer.layerMask.apply", layerId === undefined ? {} : { layer: layerId });
+
+/** 레이어 스타일의 특정 효과 하나 삭제 (index: document.inspect effects.items 순서) */
+export const removeLayerEffect = (layerId: number, index: number) => exec("layer.layerStyle.clear", { layer: layerId, effect: index });

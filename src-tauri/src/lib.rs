@@ -32,6 +32,7 @@ pub fn run() {
             files::fs_copy,
             files::fs_temp_dir,
             files::reveal_path,
+            files::app_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -24,6 +24,8 @@ export const rename = (from: string, to: string) => invoke<void>("fs_rename", { 
 export const copy = (from: string, to: string) => invoke<void>("fs_copy", { from, to });
 export const tempDir = (root: string) => invoke<string>("fs_temp_dir", { root });
 export const reveal = (path: string) => invoke<void>("reveal_path", { path });
+/** 앱 데이터 폴더 (~/Library/Application Support/<identifier>) */
+export const appDataDir = () => invoke<string>("app_data_dir");
 
 /** 경로 결합 (POSIX) */
 export function join(...parts: string[]): string {

@@ -108,6 +108,15 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     std::process::Command::new("open").arg(&path).status().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// 앱 데이터 폴더 경로 (없으면 생성). 9-Slice 이미지 사본 등 앱 전용 데이터 저장용.
+#[tauri::command]
+pub fn app_data_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 fn ensure_parent(path: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;

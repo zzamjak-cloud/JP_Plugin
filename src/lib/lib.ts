@@ -1,6 +1,6 @@
 // 공용 유틸리티: 알림, 히스토리 그룹, 문서 존재 확인
 import { transport } from "../core/transport";
-import { withHistory } from "../core/bridge";
+import { withHistory, runExclusive } from "../core/bridge";
 
 /** 알림 대화상자 (UXP showAlert 대응) */
 export async function showAlert(text: string, title = "JP Plugin"): Promise<void> {
@@ -17,13 +17,16 @@ export function executeWithHistoryGrouping<T>(fn: () => Promise<T>): Promise<T> 
   return withHistory(fn);
 }
 
-/** 오류를 알림으로 보여주는 실행 래퍼 */
+/** 오류를 알림으로 보여주는 실행 래퍼. 기능 작업은 전역 직렬화(runExclusive)된다 */
 export async function runSafe(label: string, fn: () => Promise<unknown>): Promise<void> {
   try {
-    await fn();
+    await runExclusive(fn);
   } catch (e) {
     await showAlert(`${label} 실패:\n${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 파일명에서 사용할 수 없는 문자 제거 (UXP sanitizeFileName 대응) */
+export const sanitizeFileName = (fileName: string) => fileName.replace(/[<>:"/\\|?*]/g, "_").trim();

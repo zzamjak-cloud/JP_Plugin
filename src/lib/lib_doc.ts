@@ -43,22 +43,54 @@ export async function createDoc(
 export async function createDocCopyLayers(docName: string, layerId?: number): Promise<number> {
   const params: Record<string, unknown> = { document: "new", documentName: docName };
   if (layerId !== undefined) params.layer = layerId;
-  const r = await exec<{ document: number }>("layer.duplicate", params);
+  const r = await exec<{ document?: number }>("layer.duplicate", params);
+  if (typeof r?.document !== "number") throw new Error("레이어 복제 문서를 만들지 못했습니다.");
   return r.document;
 }
 
 /** 문서 활성화 */
 export const activateDoc = (document: number) => exec("document.activate", { document });
 
-/** 저장하지 않고 문서 닫기 (기본: 활성 문서) */
-export async function docCloseWithoutSaving(document?: number): Promise<void> {
-  await exec("file.close", document === undefined ? {} : { document });
-  // 저장 확인 창이 뜬 경우 '저장 안 함'으로 응답
-  const ui = await pcCall<any>("ui.inspect").catch(() => null);
-  if (ui?.dialogs?.some((d: any) => d.id === "discard")) {
-    await pcCall("ui.dialog.confirm", { dialog: "discard", choice: "dontSave" });
-  }
+// PSD/pcraft로 저장하면 PhotoCraft가 문서 이름을 저장 파일명으로 바꾼다. 닫기 전 이름 확인에서
+// 원래 이름으로도 찾을 수 있도록 "저장 후 이름 → 저장 전 이름"을 기록한다.
+const renamedBySave = new Map<string, string>();
+export function noteDocRenamed(before: string, after: string) {
+  if (before && after && before !== after) renamedBySave.set(after, before);
 }
+function nameMatches(actual: string, expected: string): boolean {
+  let n: string | undefined = actual;
+  for (let i = 0; n !== undefined && i < 8; i++) {
+    if (n === expected) return true;
+    n = renamedBySave.get(n);
+  }
+  return false;
+}
+
+/** 인덱스의 문서 이름 (없으면 null) */
+export async function docNameAt(index: number): Promise<string | null> {
+  const { documents } = await listDocuments();
+  return documents.find((d) => d.index === index)?.name ?? null;
+}
+
+/**
+ * 저장하지 않고 문서 닫기 (기본: 활성 문서).
+ * 주의: 제어 채널의 file.close는 미저장 문서도 확인 없이 닫는다. 그래서 대상 문서가 존재하는지,
+ * expectedName이 주어지면 이름이 일치하는지 확인한 뒤에만 닫는다(인덱스가 밀려 사용자 문서를 닫는 사고 방지).
+ */
+export async function docCloseWithoutSaving(document?: number, expectedName?: string): Promise<void> {
+  const { active, documents } = await listDocuments();
+  const idx = document ?? active;
+  if (idx === null || idx === undefined) return;
+  const doc = documents.find((d) => d.index === idx);
+  if (!doc) throw new Error(`닫을 문서(${idx})를 찾을 수 없습니다.`);
+  if (expectedName !== undefined && !nameMatches(doc.name, expectedName)) {
+    throw new Error(`문서 순서가 바뀌어 "${doc.name}" 문서를 닫지 않았습니다 (예상: "${expectedName}").`);
+  }
+  await exec("file.close", { document: idx });
+}
+
+/** 작업용 임시 문서 닫기: 생성 직후 기록한 이름과 일치할 때만 닫는다 */
+export const closeTempDoc = (index: number, name: string) => docCloseWithoutSaving(index, name);
 
 /** 이미지 크기 변경 */
 export function docResize(width: number, height: number, resample = "bicubic") {
@@ -88,8 +120,18 @@ export function cropDoc(x: number, y: number, width: number, height: number) {
 /** 이미지 복제 → 새 문서 인덱스 */
 export async function duplicateDoc(name: string, mergedOnly = false): Promise<number> {
   const r = await exec<any>("image.duplicate", { name, mergedOnly });
-  return r?.document ?? (await listDocuments()).active ?? 0;
+  if (typeof r?.document !== "number") throw new Error("문서 복제에 실패했습니다.");
+  return r.document;
 }
 
 /** 모든 레이어 병합 */
 export const flatten = () => exec("layer.flattenImage", {});
+
+/** 타임라인 정보 ({current, duration, fps, …}). 타임라인이 없거나 실패하면 null */
+export async function getTimelineInfo(): Promise<{ current: number; duration: number; fps: number } | null> {
+  const r = await tryExec<any>("timeline.info", {});
+  return r?.timeline ?? null;
+}
+
+/** 타임라인 현재 프레임 지정 */
+export const setTimelineFrame = (frame: number) => exec("timeline.setFrame", { frame });

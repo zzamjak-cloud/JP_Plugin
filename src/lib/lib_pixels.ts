@@ -3,7 +3,7 @@ import { decode, encode } from "fast-png";
 import { exec } from "../core/bridge";
 import * as fsx from "../core/fs";
 import { saveActiveDocAs, tempFile, importImageAsLayer } from "./lib_export";
-import { listDocuments } from "./lib_doc";
+import { listDocuments, docNameAt, closeTempDoc } from "./lib_doc";
 
 export interface RGBAImage {
   width: number;
@@ -65,38 +65,38 @@ export async function writePngFile(path: string, img: RGBAImage): Promise<void> 
   await fsx.writeBase64(path, bytesToB64(encodePng(img)));
 }
 
-/** 레이어(들)의 픽셀을 문서 캔버스 크기 RGBA로 읽는다 (기본: 선택 레이어). 원본 문서는 변경하지 않는다 */
-export async function getLayerPixels(layerId?: number): Promise<RGBAImage> {
-  const { active } = await listDocuments();
-  const p: Record<string, unknown> = { document: "new", documentName: "jp_pixels" };
-  if (layerId !== undefined) p.layer = layerId;
-  await exec("layer.duplicate", p);
-  const tmp = await tempFile("png");
+/** 임시 문서(index, name)를 PNG로 저장해 픽셀을 읽고, 이름을 확인한 뒤 닫는다 */
+async function readTempDocPixels(index: number, name: string, restore: number | null): Promise<RGBAImage> {
+  let tmp = "";
   try {
+    await exec("document.activate", { document: index });
+    tmp = await tempFile("png");
     await saveActiveDocAs(tmp);
   } finally {
-    await exec("file.close", {});
-    if (active !== null) await exec("document.activate", { document: active }).catch(() => {});
+    await closeTempDoc(index, name);
+    if (restore !== null) await exec("document.activate", { document: restore }).catch(() => {});
   }
   const img = await readPngFile(tmp);
   await fsx.remove(tmp);
   return img;
 }
 
+/** 레이어(들)의 픽셀을 문서 캔버스 크기 RGBA로 읽는다 (기본: 선택 레이어). 원본 문서는 변경하지 않는다 */
+export async function getLayerPixels(layerId?: number): Promise<RGBAImage> {
+  const { active } = await listDocuments();
+  const p: Record<string, unknown> = { document: "new", documentName: "jp_pixels" };
+  if (layerId !== undefined) p.layer = layerId;
+  const r = await exec<{ document: number }>("layer.duplicate", p);
+  const name = (await docNameAt(r.document)) ?? "jp_pixels";
+  return readTempDocPixels(r.document, name, active);
+}
+
 /** 문서 전체 합성 이미지 */
 export async function getDocumentPixels(): Promise<RGBAImage> {
   const { active } = await listDocuments();
-  await exec("image.duplicate", { name: "jp_merged", mergedOnly: true });
-  const tmp = await tempFile("png");
-  try {
-    await saveActiveDocAs(tmp);
-  } finally {
-    await exec("file.close", {});
-    if (active !== null) await exec("document.activate", { document: active }).catch(() => {});
-  }
-  const img = await readPngFile(tmp);
-  await fsx.remove(tmp);
-  return img;
+  const r = await exec<{ document: number; name?: string }>("image.duplicate", { name: "jp_merged", mergedOnly: true });
+  const name = r.name ?? (await docNameAt(r.document)) ?? "jp_merged";
+  return readTempDocPixels(r.document, name, active);
 }
 
 /** RGBA 이미지를 활성 문서에 새 레이어로 추가 → 새 레이어 ID. (x, y): 이미지 좌상단의 문서 좌표 */

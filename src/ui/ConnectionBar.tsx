@@ -1,5 +1,5 @@
 // PhotoCraft 연결 상태·실행·설정 바
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pcLaunch, pcQuit, pcSetConfig, pcStatus, setCachedConfig, type PcStatus } from "../core/bridge";
 import { confirmDialog, showAlert } from "../lib/lib";
 import { pickFolder } from "../core/fs";
@@ -9,13 +9,19 @@ export function ConnectionBar() {
   const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
+  const inFlight = useRef(false);
   const refresh = async () => {
+    // 이전 상태 조회가 끝나지 않았으면 겹쳐 보내지 않는다
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
       const s = await pcStatus();
       setStatus(s);
       setCachedConfig(s.config);
     } catch (e) {
       setStatus(null);
+    } finally {
+      inFlight.current = false;
     }
   };
 
@@ -71,7 +77,11 @@ export function ConnectionBar() {
           </label>
           <label>
             제어 포트
-            <input type="number" defaultValue={status.config.port} onBlur={(e) => pcSetConfig({ ...status.config, port: Number(e.target.value) }).then(refresh)} />
+            <input type="number" defaultValue={status.config.port} onBlur={(e) => {
+                const port = Math.trunc(Number(e.target.value));
+                if (port >= 1 && port <= 65535) pcSetConfig({ ...status.config, port }).then(refresh);
+                else e.target.value = String(status.config.port);
+              }} />
           </label>
           <label>
             작업 루트 (PhotoCraft 파일 접근 허용 폴더)

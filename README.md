@@ -43,6 +43,18 @@ PhotoCraft는 UXP 같은 패널 플러그인을 지원하지 않는 대신, 로�
 ### 9-Slice Images
 이미지 라이브러리(프로젝트별) 등록, 슬라이스(상/하/좌/우) 편집, 클릭으로 원하는 크기의 9-slice 이미지 삽입.
 
+## CAT Plugin과 다른 점 (PhotoCraft 제약)
+
+| 기능 | 차이 |
+|---|---|
+| Export PNG & link | PhotoCraft 제어 채널이 링크 스마트 오브젝트 재연결을 거부해, PNG/PSD는 내보내지만 스마트 오브젝트는 임베디드로 남는다. |
+| Auto Paste PNG | 이벤트 구독이 없어 1초 주기로 새 PNG 스마트 오브젝트를 감지해 변환한다. |
+| Import PSD/PNG | 링크 대신 임베디드 스마트 오브젝트로 가져온다. |
+| Animation match layers | PhotoCraft 타임라인은 프레임별 레이어 위치를 저장하지 않아 프레임 순회·선택만 한다. |
+| Copy/Paste guides | 가이드 조회 명령이 없어 임시 PSD의 가이드 리소스를 읽는다(실행 시 임시 문서가 잠깐 열린다). |
+| Clear empty / hidden FX | 레이어 잠금 상태를 읽을 수 없어 잠긴 레이어 제외 조건이 없다. |
+| 작업 루트 밖 파일 | 임시 폴더(`<작업 루트>/.jp_plugin_tmp`)를 거쳐 열고 저장한다. 루트 밖에서 연 문서는 원본 경로를 알 수 없어 Clean PSD 등 "원본 위치" 기능이 동작하지 않는다. |
+
 ## 개발
 
 ```bash
@@ -66,7 +78,14 @@ scripts/tests/                기능별 하네스 테스트
 
 ### 테스트
 
-별도 PhotoCraft 인스턴스를 테스트 포트로 띄우고 하네스로 기능을 실행한다.
+별도 PhotoCraft 인스턴스를 테스트 포트로 띄우고 하네스로 기능을 실행한다. 전체 실행:
+
+```bash
+scripts/run-tests.sh            # 전용 인스턴스(포트 7990)를 띄워 scripts/tests/*.ts 전부 실행
+scripts/run-tests.sh 7990 guide # 일부만
+```
+
+수동 실행:
 
 ```bash
 PORT=7981; ROOT=/tmp/jp_test_$PORT; mkdir -p $ROOT/cfg

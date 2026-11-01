@@ -87,6 +87,12 @@ const handlers: Record<string, (a: any) => any> = {
     return d;
   },
   reveal_path: () => {},
+  app_data_dir: () => {
+    // 테스트에서는 자동화 루트 밖의 별도 폴더를 앱 데이터 폴더로 사용
+    const d = process.env.JP_APP_DATA ?? path.join(root, "..", path.basename(root) + "_appdata");
+    fs.mkdirSync(d, { recursive: true });
+    return d;
+  },
 };
 
 (globalThis as any).__JP_DIALOG_ANSWERS__ = [];

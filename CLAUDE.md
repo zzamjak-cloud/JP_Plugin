@@ -38,7 +38,12 @@ Tauri 2 + React + TypeScript. PhotoCraft 데스크톱 앱의 로컬 제어 포�
 - **다른 파일을 레이어로 가져오기**: `importImageAsLayer` (app.open → `layer.copyToDocument` → 닫기).
 - **시스템 클립보드 이미지 붙여넣기**: `edit.paste` 가 macOS 클립보드 PNG를 읽는다.
 - **픽셀 읽기/쓰기**: `lib_pixels.ts` (`getLayerPixels`, `putPixelsAsLayer`) — PNG 왕복, `fast-png`로 디코드.
-- **Undo 그룹**: `withHistory(fn)` 안의 명령은 공통 `coalesce` 키로 한 단계로 합쳐진다.
+- **Undo 그룹**: `withHistory(fn)` 안의 명령은 공통 `coalesce` 키로 한 단계로 합쳐진다(`file.*`·`document.*` 명령은 자동 제외).
+- **문서 닫기 (데이터 손실 주의)**: 제어 채널의 `file.close`는 미저장 문서도 **확인 없이** 닫는다.
+  `exec("file.close")`를 직접 쓰지 말고 `docCloseWithoutSaving(index, expectedName)` / `closeTempDoc`로 이름을 확인해 닫는다.
+  문서를 닫으면 뒤 인덱스가 당겨지므로 여러 문서를 닫을 땐 큰 인덱스부터.
+- **저장**: PSD/pcraft 저장은 Save As처럼 문서 경로·이름이 저장 파일로 바뀐다(평탄 포맷은 사본). `saveActiveDocAs`는 저장 성공 후에만 기존 파일을 교체한다.
+- **직렬화**: 기능 실행은 `runSafe` → `runExclusive`로 하나씩 실행된다. 기능 안에서 다시 `runExclusive`/`runSafe`를 부르면 교착된다. 폴링은 `tryRunExclusive`.
 - `document.inspect` 레이어 bounds는 `[x, y, w, h]`. opacity/fill은 0..1.
 - 경로 데이터: `path.set {path:{subpaths:[{closed, knots:[{anchor:[x,y], in:[x,y], out:[x,y], smooth}]}]}}`, 셰이프: `shape.create {kind:"path", path:{…}, fill}`.
 
